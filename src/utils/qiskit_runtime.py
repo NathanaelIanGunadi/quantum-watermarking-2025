@@ -36,7 +36,7 @@ def get_backend(
 ):
     all_backends = service.backends()
     if name:
-        return service.backend(backend_name=name)
+        return service.backend(name)
 
     if filters:
         matching = [b for b in all_backends if filters(b)]
