@@ -58,14 +58,15 @@ def apply_output_bias_watermark(
     copying every original gate one‐by‐one into the remaining wires,
     then on each ancilla i doing:
 
-        RY(theta_i), CX(ancilla, work_wire), CX(ancilla, work_wire)
+        1) RY(theta_i) on that wire
+        2) CZ(ancilla, work_wire) so the ancilla remains 'in use'
 
     Inputs:
       - qc: the original N‑qubit circuit.
       - num_ancilla: how many ancilla wires to insert.
       - thetas: single angle or list of length num_ancilla.
       - work_qubits: single int or list of length num_ancilla,
-        referring to original‐circuit qubit indices [0..N−1].
+        referring to original‑circuit qubit indices [0..N−1].
       - ancilla_positions: single wire _index or list of length num_ancilla
         in [0..N+num_ancilla−1] where you want those ancillas.
         If None, they default to [N, N+1, …].
@@ -105,6 +106,7 @@ def apply_output_bias_watermark(
             print(f"Warning: ancilla_positions[{i}] = {p} clamped to {newp}")
             anc_pos[i] = newp
 
+    # build a slot table: slot[w] = ("anc", i) or ("orig", original_index)
     slot = [None] * W
     for i, p in enumerate(anc_pos):
         slot[p] = ("anc", i)
@@ -114,26 +116,33 @@ def apply_output_bias_watermark(
             slot[w] = ("orig", orig_ctr)
             orig_ctr += 1
 
+    # map old‑circuit qubit index -> new wire index
     old_to_new = {
         old_q: new_wire for new_wire, (kind, old_q) in enumerate(slot) if kind == "orig"
     }
 
+    # build the new circuit (with W qubits & W clbits)
     wqc = QuantumCircuit(W, W)
 
+    # copy every original gate, remapping qubits
     for instr, qargs, _ in qc.data:
         if instr.name == "measure":
             continue
         remapped = [wqc.qubits[old_to_new[q._index]] for q in qargs]
         wqc.append(instr, remapped, [])
 
+    # now inject each ancilla watermark block
     for i in range(num_ancilla):
+        anc_wire = anc_pos[i]
         theta = theta_list[i]
         original_work = wq_list[i]
-        new_work_wire = old_to_new[original_work]
-        anc_wire = anc_pos[i]
+        work_wire = old_to_new[original_work]
+
+        # 1) give the ancilla its RY bias
         wqc.ry(theta, anc_wire)
-        wqc.cx(anc_wire, new_work_wire)
-        wqc.cx(anc_wire, new_work_wire)
+
+        # 2) single CZ to “activate” the ancilla
+        wqc.cz(anc_wire, work_wire)
 
     return wqc
 
@@ -151,6 +160,7 @@ def detect_output_bias(
     """
     W = qc.num_qubits
 
+    # normalize ancilla_positions
     if ancilla_positions is None:
         num_anc = len(thetas) if isinstance(thetas, list) else 1
         anc_pos = list(range(W - num_anc, W))
@@ -158,23 +168,29 @@ def detect_output_bias(
         anc_pos = ancilla_positions.copy()
     else:
         anc_pos = [ancilla_positions]
+
+    # clamp & warn
     for i, p in enumerate(anc_pos):
         if p < 0 or p >= W:
             newp = min(max(0, p), W - 1)
             print(f"Warning: detect pos {p} clamped to {newp}")
             anc_pos[i] = newp
 
+    # normalize thetas
     if isinstance(thetas, list):
         theta_list = thetas
     else:
         theta_list = [thetas] * len(anc_pos)
 
+    # simulate pre‑transpile
     before = simulate_counts(qc, shots)
 
+    # transpile & draw
     backend = AerSimulator(method="density_matrix")
     tc = transpile(qc, backend, optimization_level=2)
     draw(tc, "Transpiled Watermarked Circuit")
 
+    # simulate post‑transpile
     after = simulate_counts(tc, shots)
 
     detected, b0, b1, exp = [], [], [], []
@@ -190,7 +206,8 @@ def detect_output_bias(
         )
 
         print(
-            f"\nAncilla@wire {w}: before={obs0:.4f}, after={obs1:.4f}, expected={expected:.4f}"
+            f"\nAncilla@wire {w}: before={obs0:.4f}, "
+            f"after={obs1:.4f}, expected={expected:.4f}"
         )
         b0.append(obs0)
         b1.append(obs1)
@@ -236,6 +253,7 @@ def compare_accuracy(
     marg = Counter()
     for bs, c in d1.items():
         bits = list(bs)
+        # remove each ancilla bit
         for p in sorted(anc_pos, reverse=True):
             del bits[-1 - p]
         marg["".join(bits)] += c
@@ -251,27 +269,27 @@ def generate_dummy_circuit(num_qubits: int, depth: int) -> QuantumCircuit:
 
 
 def main():
-    num_qubits = 5
-    depth = 6
+    num_qubits = 3
+    depth = 3
     num_ancilla = 2
     thetas = [np.pi / 6, np.pi / 4]
-    work_qubits = [3, 1]
-    ancilla_positions = [1, 3]
+    work_qubits = [2, 1]
+    ancilla_positions = [1, 2]
 
-    qc = generate_dummy_circuit(num_qubits, depth)
-    draw(qc, "Original Dummy Circuit")
+    quantum_circuit = generate_dummy_circuit(num_qubits, depth)
+    draw(quantum_circuit, "Original Dummy Circuit")
 
     wqc = apply_output_bias_watermark(
-        qc, num_ancilla, thetas, work_qubits, ancilla_positions
+        quantum_circuit, num_ancilla, thetas, work_qubits, ancilla_positions
     )
-    draw(wqc, "Watermarked Circuit (ancillas at 1 & 3)")
+    draw(wqc, "Watermarked Circuit (ancillas at 1 & 2)")
 
     detected, before, after, exp = detect_output_bias(
         wqc, thetas, ancilla_positions, shots=3000, tol=0.02
     )
     print(f"\nDetection per ancilla: {detected}")
 
-    fidelity = compare_accuracy(qc, wqc, ancilla_positions, shots=3000)
+    fidelity = compare_accuracy(quantum_circuit, wqc, ancilla_positions, shots=3000)
     print(f"Accuracy drop = {1 - fidelity:.4f}")
 
 
