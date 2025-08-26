@@ -1,12 +1,36 @@
 import matplotlib.pyplot as plt
 from collections import Counter
 
-from qiskit import QuantumCircuit, transpile
+from qiskit import QuantumCircuit, transpile, QuantumRegister, ClassicalRegister
 from qiskit_aer import AerSimulator
 from qiskit.circuit.random import random_circuit
 
 
-def generate_dummy_circuit(num_qubits: int, depth: int) -> QuantumCircuit:
+def create_test_circuit() -> QuantumCircuit:
+    q = QuantumRegister(1, "q")
+    c = ClassicalRegister(1, "measurement")
+    qc = QuantumCircuit(q, c)
+
+    qc.h(q[0])
+    qc.x(q[0])
+
+    return qc
+
+
+def create_2q_test_circuit() -> QuantumCircuit:
+    q = QuantumRegister(2, "q")
+    c = ClassicalRegister(2, "measurement")
+    qc = QuantumCircuit(q, c)
+
+    qc.h(q[0])
+    qc.cx(q[0], q[1])
+
+    qc.measure(q, c)
+
+    return qc
+
+
+def create_random_circuit(num_qubits: int, depth: int) -> QuantumCircuit:
     """Produce a random circuit on `num_qubits` wires."""
     return random_circuit(num_qubits, depth, max_operands=2)
 

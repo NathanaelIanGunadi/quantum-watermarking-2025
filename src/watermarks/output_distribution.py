@@ -5,7 +5,7 @@ from typing import Union, List
 from qiskit import QuantumCircuit, transpile
 from qiskit_aer import AerSimulator
 
-from examples.utils import draw, generate_dummy_circuit, simulate_counts
+from utils import draw, create_random_circuit, simulate_counts
 
 
 def apply_output_bias_watermark(
@@ -234,7 +234,7 @@ def main():
     work_qubits = [2, 1]
     ancilla_positions = [1, 2]
 
-    quantum_circuit = generate_dummy_circuit(num_qubits, depth)
+    quantum_circuit = create_random_circuit(num_qubits, depth)
     draw(quantum_circuit, "Original Dummy Circuit")
 
     wqc = apply_output_bias_watermark(
